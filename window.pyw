@@ -1,6 +1,7 @@
 """
 Приложение для поиска совпадающих артикулов в двух Excel файлах.
 Архитектура построена по принципам SOLID.
+Поддержка внешних шаблонов регулярных выражений.
 """
 
 import os
@@ -43,6 +44,94 @@ class ArticleExtractor:
         if not isinstance(text, str) or not text.strip():
             return set()
         return set(self._pattern.findall(text))
+
+
+class TemplateManager:
+    """
+    Менеджер управления шаблонами регулярных выражений.
+
+    Parameters
+    ----------
+    templates_dir : str
+        Путь к каталогу с шаблонами.
+    """
+
+    def __init__(self, templates_dir: str = "templates") -> None:
+        self._templates_dir = templates_dir
+        self._ensure_templates_dir()
+        self._current_pattern: Optional[str] = None
+        self._current_template_name: Optional[str] = None
+
+    def _ensure_templates_dir(self) -> None:
+        """Создаёт каталог для шаблонов, если он не существует."""
+        if not os.path.exists(self._templates_dir):
+            os.makedirs(self._templates_dir)
+            # Создаём файл с примером шаблона
+            example_path = os.path.join(self._templates_dir, "example_patterns.txt")
+            if not os.path.exists(example_path):
+                with open(example_path, 'w', encoding='utf-8') as f:
+                    f.write("# Примеры шаблонов регулярных выражений\n")
+                    f.write("# Каждая строка - отдельный шаблон\n")
+                    f.write("# Строки, начинающиеся с # - комментарии\n")
+                    f.write("\n")
+                    f.write("# Стандартный шаблон для артикулов\n")
+                    f.write(r"[A-Za-zА-Яа-я0-9\-_]{3,}")
+                    f.write("\n")
+                    f.write("# Шаблон для числовых кодов\n")
+                    f.write(r"\d{4,}")
+                    f.write("\n")
+                    f.write("# Шаблон для буквенно-цифровых кодов с дефисами\n")
+                    f.write(r"[A-Z0-9]+-[A-Z0-9]+")
+
+    def get_templates_dir(self) -> str:
+        """Возвращает путь к каталогу шаблонов."""
+        return self._templates_dir
+
+    def load_template(self, template_path: str) -> Optional[str]:
+        """
+        Загружает шаблон из файла.
+
+        Parameters
+        ----------
+        template_path : str
+            Путь к файлу шаблона.
+
+        Returns
+        -------
+        str or None
+            Регулярное выражение из файла или None при ошибке.
+        """
+        try:
+            with open(template_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Ищем первую непустую строку, не являющуюся комментарием
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    self._current_pattern = line
+                    self._current_template_name = os.path.basename(template_path)
+                    return line
+            
+            messagebox.showwarning("Предупреждение", 
+                                 "Файл шаблона не содержит валидных выражений.")
+            return None
+        except Exception as e:
+            messagebox.showerror("Ошибка загрузки шаблона", str(e))
+            return None
+
+    def get_current_pattern(self) -> Optional[str]:
+        """Возвращает текущий активный шаблон."""
+        return self._current_pattern
+
+    def get_current_template_name(self) -> Optional[str]:
+        """Возвращает имя текущего активного шаблона."""
+        return self._current_template_name
+
+    def reset_to_default(self) -> None:
+        """Сбрасывает шаблон к стандартному значению."""
+        self._current_pattern = r'[A-Za-zА-Яа-я0-9\-_]{3,}'
+        self._current_template_name = "По умолчанию"
 
 
 class ExcelDataLoader:
@@ -137,8 +226,6 @@ class ArticleMatcher:
         return articles1.intersection(articles2)
 
 
-# ... (начало файла без изменений до класса ArticleFinderGUI) ...
-
 class ArticleFinderGUI:
     """
     Графический интерфейс приложения для поиска совпадающих артикулов.
@@ -155,7 +242,11 @@ class ArticleFinderGUI:
         self.root.geometry("900x750")
         self.root.resizable(True, True)
 
-        self._extractor = ArticleExtractor()
+        # Менеджер шаблонов
+        self._template_manager = TemplateManager()
+        
+        # Экстрактор артикулов (будет обновляться при выборе шаблона)
+        self._extractor = ArticleExtractor(self._template_manager.get_current_pattern() or r'[A-Za-zА-Яа-я0-9\-_]{3,}')
         self._matcher = ArticleMatcher()
         self._loader1: Optional[ExcelDataLoader] = None
         self._loader2: Optional[ExcelDataLoader] = None
@@ -173,14 +264,36 @@ class ArticleFinderGUI:
         self.preview_tree2: ttk.Treeview = None
         self.lbl_sel1: ttk.Label = None
         self.lbl_sel2: ttk.Label = None
+        
+        # Метка для отображения текущего шаблона
+        self.lbl_template: ttk.Label = None
 
         self._setup_ui()
+        self._create_context_menu()
 
     def _setup_ui(self) -> None:
         """Инициализирует и размещает все элементы интерфейса."""
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Treeview", rowheight=25)
+
+        # --- Панель шаблонов ---
+        frm_template = ttk.Frame(self.root)
+        frm_template.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(frm_template, text="Шаблон поиска:").pack(side="left", padx=(0, 5))
+        self.lbl_template = ttk.Label(frm_template, 
+                                     text=f"{self._template_manager.get_current_template_name() or 'По умолчанию'}",
+                                     foreground="blue")
+        self.lbl_template.pack(side="left")
+        
+        btn_load_template = ttk.Button(frm_template, text="Загрузить шаблон", 
+                                      command=self._load_template_via_dialog)
+        btn_load_template.pack(side="left", padx=(10, 0))
+        
+        btn_reset_template = ttk.Button(frm_template, text="Сбросить", 
+                                       command=self._reset_template)
+        btn_reset_template.pack(side="left", padx=(5, 0))
 
         # --- Файл 1 ---
         frm1 = ttk.LabelFrame(self.root, text="Первый файл")
@@ -208,7 +321,6 @@ class ArticleFinderGUI:
         self.preview_tree1 = self._create_preview_widget(frm1, file_num=1)
 
         # --- Файл 2 ---
-        # ИЗМЕНЕНИЕ: Обновлён текст заголовка
         frm2 = ttk.LabelFrame(self.root, text="Второй файл (с которым сравниваем)")
         frm2.pack(fill="x", padx=10, pady=5)
 
@@ -246,6 +358,95 @@ class ArticleFinderGUI:
         scroll.pack(side="right", fill="y")
         self.res_text.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
+    def _create_context_menu(self) -> None:
+        """Создаёт контекстное меню для выбора шаблона через ПКМ."""
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        
+        # Добавляем пункт для открытия каталога шаблонов
+        self.context_menu.add_command(label="Открыть каталог шаблонов", 
+                                     command=self._open_templates_dir)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Загрузить шаблон...", 
+                                     command=self._load_template_via_dialog)
+        self.context_menu.add_command(label="Сбросить к стандартному", 
+                                     command=self._reset_template)
+        
+        # Привязываем контекстное меню к главному окну
+        self.root.bind("<Button-3>", self._show_context_menu)
+
+    def _show_context_menu(self, event: tk.Event) -> None:
+        """Отображает контекстное меню при клике ПКМ."""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def _open_templates_dir(self) -> None:
+        """Открывает каталог шаблонов в проводнике."""
+        templates_dir = self._template_manager.get_templates_dir()
+        if os.name == 'nt':  # Windows
+            os.startfile(templates_dir)
+        elif os.name == 'posix':  # Linux/Mac
+            import subprocess
+            subprocess.call(['xdg-open', templates_dir])
+        else:
+            messagebox.showinfo("Информация", 
+                              f"Каталог шаблонов: {templates_dir}\n"
+                              f"Создайте здесь файлы с шаблонами регулярных выражений.")
+
+    def _load_template_via_dialog(self) -> None:
+        """Открывает диалог выбора файла шаблона."""
+        templates_dir = self._template_manager.get_templates_dir()
+        filepath = filedialog.askopenfilename(
+            initialdir=templates_dir,
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+            title="Выберите файл шаблона"
+        )
+        
+        if filepath:
+            self._load_template(filepath)
+
+    def _load_template(self, template_path: str) -> None:
+        """
+        Загружает и применяет шаблон из файла.
+
+        Parameters
+        ----------
+        template_path : str
+            Путь к файлу шаблона.
+        """
+        pattern = self._template_manager.load_template(template_path)
+        if pattern:
+            try:
+                # Проверяем валидность регулярного выражения
+                re.compile(pattern)
+                self._extractor = ArticleExtractor(pattern)
+                self.lbl_template.config(
+                    text=f"{self._template_manager.get_current_template_name()}",
+                    foreground="green"
+                )
+                messagebox.showinfo("Успех", 
+                                  f"Шаблон '{self._template_manager.get_current_template_name()}' успешно загружен.")
+            except re.error as e:
+                messagebox.showerror("Ошибка шаблона", 
+                                   f"Невалидное регулярное выражение:\n{e}")
+                self._template_manager.reset_to_default()
+                self._extractor = ArticleExtractor(self._template_manager.get_current_pattern())
+                self.lbl_template.config(
+                    text=f"{self._template_manager.get_current_template_name()}",
+                    foreground="red"
+                )
+
+    def _reset_template(self) -> None:
+        """Сбрасывает шаблон к стандартному значению."""
+        self._template_manager.reset_to_default()
+        self._extractor = ArticleExtractor(self._template_manager.get_current_pattern())
+        self.lbl_template.config(
+            text=f"{self._template_manager.get_current_template_name()}",
+            foreground="blue"
+        )
+        messagebox.showinfo("Сброс", "Шаблон сброшен к стандартному значению.")
+
     def _create_preview_widget(self, parent: ttk.Widget, file_num: int) -> ttk.Treeview:
         """
         Создаёт виджет предпросмотра данных с обработчиком клика по заголовкам.
@@ -263,14 +464,13 @@ class ArticleFinderGUI:
             Виджет предпросмотра.
         """
         preview_frame = ttk.Frame(parent)
-        preview_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))  # Уменьшил pady
+        preview_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))
         
         ttk.Label(preview_frame, text="Предпросмотр (кликните по заголовку):").pack(anchor="w")
         
         tree_frame = ttk.Frame(preview_frame)
         tree_frame.pack(fill="x", expand=True)
         
-        # Уменьшил высоту до 2 строк
         tree = ttk.Treeview(tree_frame, columns=(), show="headings", height=2)
         scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
         tree.configure(xscrollcommand=scroll_x.set)
@@ -377,25 +577,22 @@ class ArticleFinderGUI:
         tree["columns"] = cols
 
         # Расчёт ширины колонок с ограничением
-        max_width = 150  # Максимальная ширина колонки
-        min_width = 80   # Минимальная ширина
+        max_width = 150
+        min_width = 80
         
         for col in cols:
             header_text = str(col)
             cell_value = str(first_row[col]) if pd.notna(first_row[col]) else ""
             
-            # Усекаем длинные значения (добавляем "...")
             if len(cell_value) > 40:
                 cell_value = cell_value[:37] + "..."
             
-            # Расчитываем ширину на основе длины заголовка и значения
             max_len = max(len(header_text), len(cell_value))
             calculated_width = max(min_width, min(max_len * 7 + 10, max_width))
             
             tree.heading(col, text=header_text)
             tree.column(col, width=calculated_width, anchor="center", stretch=False)
 
-        # Подготавливаем значения (с усечением)
         values = []
         for val in first_row.values:
             str_val = str(val) if pd.notna(val) else ""
