@@ -461,6 +461,7 @@ class ArticleFinderGUI:
         self.status_var.set('')
 
     def _export_results(self) -> None:
+        """Экспорт результатов в Excel."""
         items = self.result_tree.get_children()
         if not items:
             self.status_var.set("Нет данных для экспорта.")
@@ -474,12 +475,34 @@ class ArticleFinderGUI:
         if file_path:
             try:
                 cols = self.result_tree["columns"]
+                # Форматируем имена колонок
+                formatted_cols = [self._format_column_name(col, idx) for idx, col in enumerate(cols)]
+                
                 data = [self.result_tree.item(item, "values") for item in items]
-                df = pd.DataFrame(data, columns=cols)
+                df = pd.DataFrame(data, columns=formatted_cols)
                 df.to_excel(file_path, index=False)
                 messagebox.showinfo("Успех", f"Результаты сохранены в:\n{file_path}")
             except Exception as e:
                 messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{e}")
+                
+    def _get_tree_data_as_text(self, tree: ttk.Treeview, items: tuple) -> str:
+        """Преобразует строки Treeview в текстовый формат (TSV)."""
+        if not items:
+            return ""
+        
+        # Заголовки колонок с форматированием
+        cols = tree["columns"]
+        formatted_headers = [self._format_column_name(col, idx) for idx, col in enumerate(cols)]
+        header = "\t".join(formatted_headers)
+        
+        # Данные
+        rows_text = []
+        for item_id in items:
+            values = tree.item(item_id, "values")
+            row_str = "\t".join(str(val) for val in values)
+            rows_text.append(row_str)
+            
+        return header + "\n" + "\n".join(rows_text)
 
     def _display_results(self, df: pd.DataFrame) -> None:
         self._clear_results()
