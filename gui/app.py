@@ -319,7 +319,11 @@ class ArticleFinderGUI:
                 self.lbl_out_status.config(text="Колонки вывода: Не выбраны (ПКМ)", foreground="grey")
                 self._update_preview(self.preview_tree2, loader.get_first_row(), 2)
 
-            messagebox.showinfo("Успех", f"Файл {file_num} загружен.")
+            # ✅ Показываем сообщение в области результатов
+            self._show_message_in_results(f"Файл {file_num} загружен: {os.path.basename(path)}")
+            # ✅ И дублируем в строку состояния для надёжности
+            self.status_var.set(f"Файл {file_num} загружен: {os.path.basename(path)}")
+            
         except Exception as e:
             messagebox.showerror("Ошибка загрузки", str(e))
 
@@ -436,19 +440,28 @@ class ArticleFinderGUI:
         try:
             self.root.config(cursor="wait")
             self.root.update()
-            # Используем публичный метод get_dataframe вместо прямого доступа к _dataframe
+             # ✅ Показываем статус в области результатов
+            # self._show_message_in_results("🔍 Выполняется поиск...", duration_ms=10000)
+            
+            # ✅ Очищаем предыдущие результаты перед новым поиском
+            self._clear_results()
+            self.status_var.set("Выполняется поиск...")
+            
             result_df = self._search_engine.search(
-                self._loader1.get_dataframe(),
+                self._loader1.get_dataframe(),  # ✅ Используем геттер вместо _dataframe
                 self.selected_src_col,
                 self._loader2.get_dataframe(),
                 self.selected_tgt_col,
                 self.selected_output_cols
             )
+            
             self._display_results(result_df)
+            
             if result_df.empty:
-                messagebox.showinfo("Результат", "Совпадений не найдено.")
+                self.status_var.set("Совпадений не найдено.")
             else:
                 self.status_var.set(f"Найдено строк: {len(result_df)}")
+                                
         except Exception as e:
             messagebox.showerror("Ошибка поиска", str(e))
         finally:
@@ -519,3 +532,28 @@ class ArticleFinderGUI:
 
         for row in df.values.tolist():
             self.result_tree.insert("", "end", values=[str(val) for val in row])
+            
+    def _show_message_in_results(self, message: str, duration_ms: int = 3000) -> None:
+        """
+        Отображает временное информационное сообщение в таблице результатов.
+        
+        Parameters
+        ----------
+        message : str
+            Текст сообщения для отображения.
+        duration_ms : int, optional
+            Время показа сообщения в миллисекундах (по умолчанию 3000 мс = 3 сек).
+        """
+        # Очищаем таблицу
+        self._clear_results()
+        
+        # Настраиваем одну колонку для сообщения
+        self.result_tree["columns"] = ("message",)
+        self.result_tree.heading("message", text="ℹ️ Информация")
+        self.result_tree.column("message", width=400, anchor="center")
+        
+        # Добавляем строку с сообщением
+        self.result_tree.insert("", "end", values=(message,))
+        
+        # Автоматически очищаем сообщение через указанное время
+        self.root.after(duration_ms, self._clear_results)
