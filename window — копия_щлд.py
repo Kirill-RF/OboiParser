@@ -1,13 +1,15 @@
 """
 Приложение для поиска строк по артикулам в Excel файлах.
-Исправлен порядок колонок и контекстные меню.
+Обновленная версия с выбором колонок прямо в предпросмотре.
 """
+
 import os
 import re
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import Optional, List
+from typing import Optional, Set, List
+
 import pandas as pd
 
 
@@ -18,10 +20,10 @@ class ArticleExtractor:
     def __init__(self, pattern: str = r'[A-Za-zА-Яа-я0-9\-_]{3,}') -> None:
         self._pattern = re.compile(pattern)
 
-    def extract(self, text: Optional[str]) -> List[str]:
+    def extract(self, text: Optional[str]) -> Set[str]:
         if not isinstance(text, str) or not text.strip():
-            return []
-        return list(set(self._pattern.findall(text)))
+            return set()
+        return set(self._pattern.findall(text))
 
 
 class TemplateManager:
@@ -49,7 +51,7 @@ class TemplateManager:
             with open(template_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             for line in lines:
-                line = line.strip() 
+                line = line.strip()
                 if line and not line.startswith('#'):
                     self._current_pattern = line
                     self._current_template_name = os.path.basename(template_path)
@@ -94,6 +96,11 @@ class ExcelDataLoader:
         if self._dataframe is None: return []
         return self._dataframe.columns.astype(str).tolist()
 
+    def get_column_data(self, column_name: str) -> pd.Series:
+        if self._dataframe is None: raise ValueError("Данные не загружены.")
+        if column_name not in self._dataframe.columns: raise KeyError(f"Колонка '{column_name}' не найдена.")
+        return self._dataframe[column_name]
+
     def get_first_row(self) -> Optional[pd.Series]:
         if self._dataframe is None or self._dataframe.empty: return None
         return self._dataframe.iloc[0]
@@ -108,38 +115,33 @@ class ArticleSearchEngine:
                target_df: pd.DataFrame, target_col: str, output_cols: List[str]) -> pd.DataFrame:
         
         # Собираем эталонные артикулы
-        source_articles = set()
-        for val in source_df[source_col]:
-            source_articles.update(self._extractor.extract(str(val)))
-        
+        source_articles = set(source_df[source_col].astype(str).str.strip().unique())
         source_articles.discard('')
         source_articles.discard('nan')
-        if not source_articles: raise ValueError("В колонке справочника не найдено артикулов.")
+        if not source_articles: raise ValueError("В колонке артикулов пусто.")
 
         # Фильтруем второй файл
         mask = target_df[target_col].apply(
-            lambda x: bool(set(self._extractor.extract(str(x))).intersection(source_articles))
+            lambda x: bool(self._extractor.extract(str(x)).intersection(source_articles))
         )
         filtered_df = target_df.loc[mask].copy()
 
         if filtered_df.empty: return pd.DataFrame()
 
-        # Выбираем нужные колонки В ПОРЯДКЕ ВЫБОРА ПОЛЬЗОВАТЕЛЯ
-        # output_cols - это список, порядок важен
+        # Выбираем нужные колонки
         valid_cols = [col for col in output_cols if col in filtered_df.columns]
+        if not valid_cols: valid_cols = filtered_df.columns.tolist()
         
-        if not valid_cols: 
-            valid_cols = filtered_df.columns.tolist()
-            
         return filtered_df[valid_cols]
 
 
 class ArticleFinderGUI:
     """Графический интерфейс приложения."""
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Поиск строк по артикулам")
-        self.root.geometry("950x750")
+        self.root.geometry("900x650")
         self.root.resizable(True, True)
 
         self._template_manager = TemplateManager()
@@ -152,7 +154,7 @@ class ArticleFinderGUI:
         # Состояние выбора колонок
         self.selected_src_col: Optional[str] = None  # Колонка с артикулами (Файл 1)
         self.selected_tgt_col: Optional[str] = None  # Колонка для поиска (Файл 2)
-        self.selected_output_cols: List[str] = []    # Колонки для вывода (Файл 2) - ИЗМЕНЕНО НА LIST
+        self.selected_output_cols: Set[str] = set()  # Колонки для вывода (Файл 2)
 
         # Виджеты
         self.lbl_template: ttk.Label = None
@@ -185,13 +187,8 @@ class ArticleFinderGUI:
         ttk.Button(frm_template, text="Загрузить шаблон", command=self._load_template_via_dialog).pack(side="left", padx=(10, 0))
         ttk.Button(frm_template, text="Сбросить", command=self._reset_template).pack(side="left", padx=(5, 0))
 
-        # Строка состояния
-        self.status_var = tk.StringVar()
-        self.status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
         # --- Файл 1 (Источник) ---
-        frm1 = ttk.LabelFrame(self.root, text="1. Файл-Справочник (Где лежат артикулы)")
+        frm1 = ttk.LabelFrame(self.root, text="1. Файл со списком артикулов (Эталон)")
         frm1.pack(fill="x", padx=10, pady=5)
         
         btn_frame1 = ttk.Frame(frm1)
@@ -201,12 +198,12 @@ class ArticleFinderGUI:
         ttk.Button(btn_frame1, text="Выбрать", command=lambda: self._select_file(self.path1_var)).pack(side="left", padx=2)
         ttk.Button(btn_frame1, text="Загрузить", command=self._load_file1).pack(side="left", padx=2)
 
-        self.lbl_src_status = ttk.Label(frm1, text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", foreground="grey")
+        self.lbl_src_status = ttk.Label(frm1, text="Выбрана колонка с артикулами: Не выбрана (ЛКМ по заголовку)", foreground="grey")
         self.lbl_src_status.pack(anchor="w", padx=10, pady=(0, 5))
         self.preview_tree1 = self._create_preview_widget(frm1, file_num=1)
 
         # --- Файл 2 (Целевой) ---
-        frm2 = ttk.LabelFrame(self.root, text="2. Файл для поиска (Где ищем совпадения)")
+        frm2 = ttk.LabelFrame(self.root, text="2. Файл для поиска (Где искать)")
         frm2.pack(fill="x", padx=10, pady=5)
         
         btn_frame2 = ttk.Frame(frm2)
@@ -228,13 +225,8 @@ class ArticleFinderGUI:
 
         self.preview_tree2 = self._create_preview_widget(frm2, file_num=2)
 
-        # --- Кнопки управления ---
-        frm_btn = ttk.Frame(self.root)
-        frm_btn.pack(pady=10)
-        
-        ttk.Button(frm_btn, text="Найти совпадения", command=self._find_matches).pack(side="left", padx=5)
-        ttk.Button(frm_btn, text="Экспорт в Excel", command=self._export_results).pack(side="left", padx=5)
-        ttk.Button(frm_btn, text="Очистить", command=self._clear_results).pack(side="left", padx=5)
+        # --- Кнопка поиска ---
+        ttk.Button(self.root, text="Найти совпадения", command=self._find_matches).pack(pady=10)
 
         # --- Результаты ---
         frm_res = ttk.LabelFrame(self.root, text="Результаты поиска")
@@ -277,32 +269,13 @@ class ArticleFinderGUI:
         self.context_menu.add_command(label="Открыть каталог шаблонов", command=self._open_templates_dir)
         self.context_menu.add_command(label="Загрузить шаблон...", command=self._load_template_via_dialog)
         self.context_menu.add_command(label="Сбросить к стандартному", command=self._reset_template)
-        # Привязываем контекстное меню ко всему окну, но с проверкой в обработчике
         self.root.bind("<Button-3>", self._show_context_menu)
 
     def _show_context_menu(self, event: tk.Event) -> None:
-        # ПРОВЕРКА: Если клик был по дереву предпросмотра 2, не показываем главное меню
-        # winfo_containing возвращает виджет, в котором произошло событие
-        widget = self.root.winfo_containing(event.x_root, event.y_root)
-        
-        # Проверяем, является ли виджет деревом или находится внутри него
-        is_tree_click = False
-        if widget == self.preview_tree2:
-            is_tree_click = True
-        else:
-            # Проходим по родителям, чтобы убедиться, что клик не внутри дерева
-            parent = widget
-            while parent:
-                if parent == self.preview_tree2:
-                    is_tree_click = True
-                    break
-                parent = parent.master if hasattr(parent, 'master') else None
-        
-        if not is_tree_click:
-            try:
-                self.context_menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                self.context_menu.grab_release()
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
 
     def _open_templates_dir(self) -> None:
         templates_dir = self._template_manager.get_templates_dir()
@@ -354,12 +327,12 @@ class ArticleFinderGUI:
             if file_num == 1:
                 self._loader1 = loader
                 self.selected_src_col = None
-                self.lbl_src_status.config(text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", foreground="grey")
+                self.lbl_src_status.config(text="Выбрана колонка с артикулами: Не выбрана (ЛКМ по заголовку)", foreground="grey")
                 self._update_preview(self.preview_tree1, loader.get_first_row(), 1)
             else:
                 self._loader2 = loader
                 self.selected_tgt_col = None
-                self.selected_output_cols = [] # Сброс списка
+                self.selected_output_cols.clear()
                 self.lbl_tgt_status.config(text="Колонка поиска: Не выбрана (ЛКМ)", foreground="grey")
                 self.lbl_out_status.config(text="Колонки вывода: Не выбраны (ПКМ)", foreground="grey")
                 self._update_preview(self.preview_tree2, loader.get_first_row(), 2)
@@ -385,7 +358,7 @@ class ArticleFinderGUI:
         if file_num == 1:
             self.selected_src_col = selected_col_name
             display_name = self._format_column_name(selected_col_name, col_index)
-            self.lbl_src_status.config(text=f"Выбрана колонка: {display_name}", foreground="black")
+            self.lbl_src_status.config(text=f"Выбрана колонка с артикулами: {display_name}", foreground="black")
             self._highlight_header_single(tree, cols, selected_col_name)
         else:
             self.selected_tgt_col = selected_col_name
@@ -407,19 +380,14 @@ class ArticleFinderGUI:
 
         selected_col_name = cols[col_index]
 
-        # ИЗМЕНЕНО: Работа со списком для сохранения порядка
         if selected_col_name in self.selected_output_cols:
             self.selected_output_cols.remove(selected_col_name)
         else:
-            self.selected_output_cols.append(selected_col_name)
+            self.selected_output_cols.add(selected_col_name)
 
         # Обновляем статус
         if self.selected_output_cols:
-            # Формируем названия для отображения
-            names = []
-            for c in self.selected_output_cols:
-                idx = list(cols).index(c)
-                names.append(self._format_column_name(c, idx))
+            names = [self._format_column_name(c, list(cols).index(c)) for c in self.selected_output_cols]
             self.lbl_out_status.config(text=f"Колонки вывода: {', '.join(names)}", foreground="black")
         else:
             self.lbl_out_status.config(text="Колонки вывода: Не выбраны (ПКМ)", foreground="grey")
@@ -455,12 +423,14 @@ class ArticleFinderGUI:
 
     def _highlight_header_output(self, tree: ttk.Treeview, cols: tuple) -> None:
         """Обновление заголовков для Файла 2 (Колонки вывода)"""
+        # Нужно сохранить текущий выбор поиска, чтобы не сбросить его визуально
         current_search = self.selected_tgt_col
         
         for col in cols:
             idx = list(cols).index(col)
             base_text = self._format_column_name(col, idx)
             
+            # Логика формирования текста заголовка
             is_output = col in self.selected_output_cols
             is_search = col == current_search
             
@@ -507,7 +477,7 @@ class ArticleFinderGUI:
                 self.selected_src_col,
                 self._loader2._dataframe,
                 self.selected_tgt_col,
-                self.selected_output_cols # Передаем список
+                list(self.selected_output_cols)
             )
             
             self._display_results(result_df)
@@ -515,59 +485,25 @@ class ArticleFinderGUI:
             if result_df.empty:
                 messagebox.showinfo("Результат", "Совпадений не найдено.")
             else:
-                self.status_var.set(f"Найдено строк: {len(result_df)}")
-                                
+                messagebox.showinfo("Результат", f"Найдено строк: {len(result_df)}")
+                
         except Exception as e:
             messagebox.showerror("Ошибка поиска", str(e))
         finally:
             self.root.config(cursor="")
 
-    def _clear_results(self) -> None:
-        """Очистка таблицы результатов"""
+    def _display_results(self, df: pd.DataFrame) -> None:
         for item in self.result_tree.get_children():
             self.result_tree.delete(item)
-        self.result_tree["columns"] = ()
-        self.status_var.set('')
-
-    def _export_results(self) -> None:
-        """Экспорт результатов в Excel"""
-        # Получаем данные из Treeview
-        items = self.result_tree.get_children()
-        if not items:
-            self.status_var.set("Файл 1 загружен.")
-            return
-
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel файлы", "*.xlsx"), ("Все файлы", "*.*")],
-            title="Сохранить результаты поиска"
-        )
-
-        if file_path:
-            try:
-                cols = self.result_tree["columns"]
-                data = []
-                for item in items:
-                    data.append(self.result_tree.item(item, "values"))
-                
-                df = pd.DataFrame(data, columns=cols)
-                df.to_excel(file_path, index=False)
-                messagebox.showinfo("Успех", f"Результаты сохранены в:\n{file_path}")
-            except Exception as e:
-                messagebox.showerror("Ошибка экспорта", f"Не удалось сохранить файл:\n{e}")
-
-    def _display_results(self, df: pd.DataFrame) -> None:
-        # Очистка перед выводом
-        self._clear_results()
         
         if df.empty:
+            self.result_tree["columns"] = ()
             return
 
         cols = df.columns.astype(str).tolist()
         self.result_tree["columns"] = cols
         
         for i, col in enumerate(cols):
-            # Для отображения также используем форматирование имен
             display_name = self._format_column_name(col, i)
             self.result_tree.heading(col, text=display_name)
             max_len = df[col].astype(str).map(len).max()
