@@ -1,15 +1,14 @@
 """
-Приложение для поиска совпадающих артикулов в двух Excel файлах.
-Архитектура построена по принципам SOLID.
-Поддержка внешних шаблонов регулярных выражений.
+Приложение для поиска строк по артикулам в Excel файлах.
+Архитектура: SOLID, NumPy docstring style.
 """
 
 import os
 import re
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from typing import Optional, Set, List
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+from typing import Optional, Set, List, Dict
 
 import pandas as pd
 
@@ -47,14 +46,7 @@ class ArticleExtractor:
 
 
 class TemplateManager:
-    """
-    Менеджер управления шаблонами регулярных выражений.
-
-    Parameters
-    ----------
-    templates_dir : str
-        Путь к каталогу с шаблонами.
-    """
+    """Менеджер управления шаблонами регулярных выражений."""
 
     def __init__(self, templates_dir: str = "templates") -> None:
         self._templates_dir = templates_dir
@@ -66,97 +58,50 @@ class TemplateManager:
         """Создаёт каталог для шаблонов, если он не существует."""
         if not os.path.exists(self._templates_dir):
             os.makedirs(self._templates_dir)
-            # Создаём файл с примером шаблона
             example_path = os.path.join(self._templates_dir, "example_patterns.txt")
             if not os.path.exists(example_path):
                 with open(example_path, 'w', encoding='utf-8') as f:
-                    f.write("# Примеры шаблонов регулярных выражений\n")
-                    f.write("# Каждая строка - отдельный шаблон\n")
-                    f.write("# Строки, начинающиеся с # - комментарии\n")
-                    f.write("\n")
-                    f.write("# Стандартный шаблон для артикулов\n")
-                    f.write(r"[A-Za-zА-Яа-я0-9\-_]{3,}")
-                    f.write("\n")
-                    f.write("# Шаблон для числовых кодов\n")
-                    f.write(r"\d{4,}")
-                    f.write("\n")
-                    f.write("# Шаблон для буквенно-цифровых кодов с дефисами\n")
-                    f.write(r"[A-Z0-9]+-[A-Z0-9]+")
+                    f.write("# Шаблон для артикулов обоев\n")
+                    f.write(r"\b(?:[A-Z]{0,3}\d{3,6}(?:[-–]\d{1,3})?|\d{4,6}(?:[-–][A-Z0-9]{1,3})?)\b")
 
     def get_templates_dir(self) -> str:
-        """Возвращает путь к каталогу шаблонов."""
         return self._templates_dir
 
     def load_template(self, template_path: str) -> Optional[str]:
-        """
-        Загружает шаблон из файла.
-
-        Parameters
-        ----------
-        template_path : str
-            Путь к файлу шаблона.
-
-        Returns
-        -------
-        str or None
-            Регулярное выражение из файла или None при ошибке.
-        """
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-            
-            # Ищем первую непустую строку, не являющуюся комментарием
             for line in lines:
                 line = line.strip()
                 if line and not line.startswith('#'):
                     self._current_pattern = line
                     self._current_template_name = os.path.basename(template_path)
                     return line
-            
-            messagebox.showwarning("Предупреждение", 
-                                 "Файл шаблона не содержит валидных выражений.")
+            messagebox.showwarning("Предупреждение", "Файл шаблона пуст или содержит только комментарии.")
             return None
         except Exception as e:
             messagebox.showerror("Ошибка загрузки шаблона", str(e))
             return None
 
     def get_current_pattern(self) -> Optional[str]:
-        """Возвращает текущий активный шаблон."""
         return self._current_pattern
 
     def get_current_template_name(self) -> Optional[str]:
-        """Возвращает имя текущего активного шаблона."""
         return self._current_template_name
 
     def reset_to_default(self) -> None:
-        """Сбрасывает шаблон к стандартному значению."""
         self._current_pattern = r'[A-Za-zА-Яа-я0-9\-_]{3,}'
         self._current_template_name = "По умолчанию"
 
 
 class ExcelDataLoader:
-    """
-    Класс для загрузки и чтения данных из Excel файлов (.xls, .xlsx).
-
-    Parameters
-    ----------
-    file_path : str
-        Путь к Excel файлу.
-    """
+    """Класс для загрузки Excel файлов."""
 
     def __init__(self, file_path: str) -> None:
         self._file_path = file_path
         self._dataframe: Optional[pd.DataFrame] = None
 
     def load(self) -> pd.DataFrame:
-        """
-        Загружает Excel файл в DataFrame.
-
-        Returns
-        -------
-        pd.DataFrame
-            Загруженная таблица данных.
-        """
         if not os.path.exists(self._file_path):
             raise FileNotFoundError(f"Файл не найден: {self._file_path}")
 
@@ -169,28 +114,16 @@ class ExcelDataLoader:
             raise ValueError("Поддерживаются только форматы .xls и .xlsx")
 
         self._dataframe = pd.read_excel(self._file_path, engine=engine)
+        # Заполняем NaN пустыми строками для удобства работы с текстом
+        self._dataframe = self._dataframe.fillna('')
         return self._dataframe
 
     def get_columns(self) -> List[str]:
-        """Возвращает список названий колонок."""
         if self._dataframe is None:
             return []
         return self._dataframe.columns.astype(str).tolist()
 
     def get_column_data(self, column_name: str) -> pd.Series:
-        """
-        Возвращает данные указанной колонки.
-
-        Parameters
-        ----------
-        column_name : str
-            Название колонки.
-
-        Returns
-        -------
-        pd.Series
-            Данные колонки.
-        """
         if self._dataframe is None:
             raise ValueError("Данные не загружены.")
         if column_name not in self._dataframe.columns:
@@ -198,275 +131,203 @@ class ExcelDataLoader:
         return self._dataframe[column_name]
 
     def get_first_row(self) -> Optional[pd.Series]:
-        """Возвращает первую строку данных для предпросмотра."""
         if self._dataframe is None or self._dataframe.empty:
             return None
         return self._dataframe.iloc[0]
 
 
-class ArticleMatcher:
-    """Класс для поиска пересечений между двумя множествами артикулов."""
+class ArticleSearchEngine:
+    """
+    Движок поиска строк по списку артикулов.
+    """
 
-    def find_common(self, articles1: Set[str], articles2: Set[str]) -> Set[str]:
+    def __init__(self, extractor: ArticleExtractor) -> None:
+        self._extractor = extractor
+
+    def search(
+        self,
+        source_df: pd.DataFrame,
+        source_col: str,
+        target_df: pd.DataFrame,
+        target_col: str,
+        output_cols: List[str]
+    ) -> pd.DataFrame:
         """
-        Находит артикулы, присутствующие в обоих множествах.
+        Ищет строки в target_df, содержащие артикулы из source_df.
 
         Parameters
         ----------
-        articles1 : set of str
-            Первое множество артикулов.
-        articles2 : set of str
-            Второе множество артикулов.
+        source_df : pd.DataFrame
+            DataFrame со списком эталонных артикулов.
+        source_col : str
+            Колонка в source_df с чистыми артикулами.
+        target_df : pd.DataFrame
+            DataFrame, в котором производится поиск.
+        target_col : str
+            Колонка в target_df, где ищутся совпадения.
+        output_cols : List[str]
+            Список колонок для включения в результат.
 
         Returns
         -------
-        set of str
-            Множество общих артикулов.
+        pd.DataFrame
+            Отфильтрованный DataFrame с выбранными колонками.
         """
-        return articles1.intersection(articles2)
+        # 1. Собираем множество эталонных артикулов
+        source_articles = set(source_df[source_col].astype(str).str.strip().unique())
+        source_articles.discard('')
+        source_articles.discard('nan')
+
+        if not source_articles:
+            raise ValueError("В выбранной колонке первого файла не найдено артикулов.")
+
+        # 2. Фильтруем второй файл
+        mask = target_df[target_col].apply(
+            lambda x: bool(self._extractor.extract(str(x)).intersection(source_articles))
+        )
+
+        filtered_df = target_df.loc[mask].copy()
+
+        if filtered_df.empty:
+            return pd.DataFrame()
+
+        # 3. Выбираем нужные колонки
+        valid_cols = [col for col in output_cols if col in filtered_df.columns]
+        if not valid_cols:
+            valid_cols = filtered_df.columns.tolist()
+
+        result_df = filtered_df[valid_cols]
+        return result_df
 
 
 class ArticleFinderGUI:
-    """
-    Графический интерфейс приложения для поиска совпадающих артикулов.
-
-    Parameters
-    ----------
-    root : tk.Tk
-        Корневое окно приложения Tkinter.
-    """
+    """Графический интерфейс приложения."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Поиск совпадений артикулов в Excel")
-        self.root.geometry("900x750")
+        self.root.title("Поиск строк по артикулам")
+        self.root.geometry("950x700")
         self.root.resizable(True, True)
 
-        # Менеджер шаблонов
         self._template_manager = TemplateManager()
-        
-        # Экстрактор артикулов (будет обновляться при выборе шаблона)
         self._extractor = ArticleExtractor(self._template_manager.get_current_pattern() or r'[A-Za-zА-Яа-я0-9\-_]{3,}')
-        self._matcher = ArticleMatcher()
+        self._search_engine = ArticleSearchEngine(self._extractor)
+        
         self._loader1: Optional[ExcelDataLoader] = None
         self._loader2: Optional[ExcelDataLoader] = None
 
-        # Хранилище выбранных колонок (по имени)
-        self.selected_col1: Optional[str] = None
-        self.selected_col2: Optional[str] = None
+        # Состояние выбора колонок (храним внутренние имена колонок pandas)
+        self.selected_src_col: Optional[str] = None
+        self.selected_tgt_col: Optional[str] = None
         
-        # Хранилище оригинальных заголовков для сброса визуального выделения
-        self.orig_headers1: List[str] = []
-        self.orig_headers2: List[str] = []
+        # Выбранные колонки для вывода (внутренние имена)
+        self.selected_output_cols: Set[str] = set()
 
-        # Виджеты предпросмотра и статусов выбора
+        # Виджеты
+        self.lbl_template: ttk.Label = None
+        
+        # Метки статуса выбора
+        self.lbl_src_status: ttk.Label = None
+        self.lbl_tgt_status: ttk.Label = None
+        
+        # Деревья предпросмотра
         self.preview_tree1: ttk.Treeview = None
         self.preview_tree2: ttk.Treeview = None
-        self.lbl_sel1: ttk.Label = None
-        self.lbl_sel2: ttk.Label = None
         
-        # Метка для отображения текущего шаблона
-        self.lbl_template: ttk.Label = None
+        # Фрейм с чекбоксами
+        self.checkboxes_frame: ttk.Frame = None
+        self.col_checkboxes: Dict[str, ttk.Checkbutton] = {}
 
         self._setup_ui()
         self._create_context_menu()
 
+    def _format_column_name(self, col_name: str, index: int) -> str:
+        """
+        Форматирует имя колонки для отображения пользователю.
+        Если имя пустое или Unnamed, возвращает 'Колонка N'.
+        """
+        if not col_name or col_name.startswith('Unnamed'):
+            return f"Колонка {index + 1}"
+        return col_name
+
     def _setup_ui(self) -> None:
-        """Инициализирует и размещает все элементы интерфейса."""
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Treeview", rowheight=25)
 
         # --- Панель шаблонов ---
         frm_template = ttk.Frame(self.root)
         frm_template.pack(fill="x", padx=10, pady=5)
-        
         ttk.Label(frm_template, text="Шаблон поиска:").pack(side="left", padx=(0, 5))
-        self.lbl_template = ttk.Label(frm_template, 
-                                     text=f"{self._template_manager.get_current_template_name() or 'По умолчанию'}",
-                                     foreground="blue")
+        self.lbl_template = ttk.Label(frm_template, text="По умолчанию", foreground="blue")
         self.lbl_template.pack(side="left")
-        
-        btn_load_template = ttk.Button(frm_template, text="Загрузить шаблон", 
-                                      command=self._load_template_via_dialog)
-        btn_load_template.pack(side="left", padx=(10, 0))
-        
-        btn_reset_template = ttk.Button(frm_template, text="Сбросить", 
-                                       command=self._reset_template)
-        btn_reset_template.pack(side="left", padx=(5, 0))
+        ttk.Button(frm_template, text="Загрузить шаблон", command=self._load_template_via_dialog).pack(side="left", padx=(10, 0))
+        ttk.Button(frm_template, text="Сбросить", command=self._reset_template).pack(side="left", padx=(5, 0))
 
-        # --- Файл 1 ---
-        frm1 = ttk.LabelFrame(self.root, text="Первый файл")
+        # --- Файл 1 (Источник артикулов) ---
+        frm1 = ttk.LabelFrame(self.root, text="1. Файл со списком артикулов (Эталон)")
         frm1.pack(fill="x", padx=10, pady=5)
-
+        
         btn_frame1 = ttk.Frame(frm1)
         btn_frame1.pack(fill="x", padx=5, pady=5)
-        
         self.path1_var = tk.StringVar()
-        ttk.Entry(btn_frame1, textvariable=self.path1_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=(0, 5)
-        )
-        ttk.Button(btn_frame1, text="Выбрать", command=lambda: self._select_file(self.path1_var)).pack(
-            side="left", padx=2
-        )
-        ttk.Button(btn_frame1, text="Загрузить", command=self._load_file1).pack(
-            side="left", padx=2
-        )
+        ttk.Entry(btn_frame1, textvariable=self.path1_var, state="readonly").pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(btn_frame1, text="Выбрать", command=lambda: self._select_file(self.path1_var)).pack(side="left", padx=2)
+        ttk.Button(btn_frame1, text="Загрузить", command=self._load_file1).pack(side="left", padx=2)
 
         # Статус выбора колонки 1
-        self.lbl_sel1 = ttk.Label(frm1, text="Выбрана колонка: Не выбрана", foreground="grey")
-        self.lbl_sel1.pack(anchor="w", padx=10, pady=(0, 5))
+        self.lbl_src_status = ttk.Label(frm1, text="Выбрана колонка: Не выбрана (кликните по заголовку)", foreground="grey")
+        self.lbl_src_status.pack(anchor="w", padx=10, pady=(0, 5))
 
-        # Предпросмотр данных 1
+        # Предпросмотр Файла 1
         self.preview_tree1 = self._create_preview_widget(frm1, file_num=1)
 
-        # --- Файл 2 ---
-        frm2 = ttk.LabelFrame(self.root, text="Второй файл (с которым сравниваем)")
+        # --- Файл 2 (Целевая база) ---
+        frm2 = ttk.LabelFrame(self.root, text="2. Файл для поиска (Где искать)")
         frm2.pack(fill="x", padx=10, pady=5)
-
+        
         btn_frame2 = ttk.Frame(frm2)
         btn_frame2.pack(fill="x", padx=5, pady=5)
-        
         self.path2_var = tk.StringVar()
-        ttk.Entry(btn_frame2, textvariable=self.path2_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=(0, 5)
-        )
-        ttk.Button(btn_frame2, text="Выбрать", command=lambda: self._select_file(self.path2_var)).pack(
-            side="left", padx=2
-        )
-        ttk.Button(btn_frame2, text="Загрузить", command=self._load_file2).pack(
-            side="left", padx=2
-        )
+        ttk.Entry(btn_frame2, textvariable=self.path2_var, state="readonly").pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(btn_frame2, text="Выбрать", command=lambda: self._select_file(self.path2_var)).pack(side="left", padx=2)
+        ttk.Button(btn_frame2, text="Загрузить", command=self._load_file2).pack(side="left", padx=2)
 
-        # Статус выбора колонки 2
-        self.lbl_sel2 = ttk.Label(frm2, text="Выбрана колонка: Не выбрана", foreground="grey")
-        self.lbl_sel2.pack(anchor="w", padx=10, pady=(0, 5))
+        # Статус выбора колонки поиска
+        self.lbl_tgt_status = ttk.Label(frm2, text="Колонка для поиска: Не выбрана (кликните по заголовку)", foreground="grey")
+        self.lbl_tgt_status.pack(anchor="w", padx=10, pady=(0, 5))
 
-        # Предпросмотр данных 2
+        # Предпросмотр Файла 2
         self.preview_tree2 = self._create_preview_widget(frm2, file_num=2)
+
+        # Панель выбора колонок для вывода
+        self.checkboxes_frame = ttk.LabelFrame(frm2, text="Колонки для вывода (отметьте нужные)")
+        self.checkboxes_frame.pack(fill="both", expand=False, padx=5, pady=5)
+        # Сюда будут добавляться чекбоксы динамически
 
         # --- Кнопка поиска ---
         ttk.Button(self.root, text="Найти совпадения", command=self._find_matches).pack(pady=10)
 
         # --- Результаты ---
-        frm_res = ttk.LabelFrame(self.root, text="Найденные совпадения")
+        frm_res = ttk.LabelFrame(self.root, text="Результаты поиска")
         frm_res.pack(fill="both", expand=True, padx=10, pady=5)
 
-        self.res_text = tk.Text(frm_res, wrap="word", state="disabled", font=("Consolas", 10))
-        scroll = ttk.Scrollbar(frm_res, command=self.res_text.yview)
-        self.res_text.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        self.res_text.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-
-    def _create_context_menu(self) -> None:
-        """Создаёт контекстное меню для выбора шаблона через ПКМ."""
-        self.context_menu = tk.Menu(self.root, tearoff=0)
+        tree_frame = ttk.Frame(frm_res)
+        tree_frame.pack(fill="both", expand=True)
         
-        # Добавляем пункт для открытия каталога шаблонов
-        self.context_menu.add_command(label="Открыть каталог шаблонов", 
-                                     command=self._open_templates_dir)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Загрузить шаблон...", 
-                                     command=self._load_template_via_dialog)
-        self.context_menu.add_command(label="Сбросить к стандартному", 
-                                     command=self._reset_template)
+        self.result_tree = ttk.Treeview(tree_frame, show="headings")
+        v_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.result_tree.yview)
+        h_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.result_tree.xview)
         
-        # Привязываем контекстное меню к главному окну
-        self.root.bind("<Button-3>", self._show_context_menu)
-
-    def _show_context_menu(self, event: tk.Event) -> None:
-        """Отображает контекстное меню при клике ПКМ."""
-        try:
-            self.context_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self.context_menu.grab_release()
-
-    def _open_templates_dir(self) -> None:
-        """Открывает каталог шаблонов в проводнике."""
-        templates_dir = self._template_manager.get_templates_dir()
-        if os.name == 'nt':  # Windows
-            os.startfile(templates_dir)
-        elif os.name == 'posix':  # Linux/Mac
-            import subprocess
-            subprocess.call(['xdg-open', templates_dir])
-        else:
-            messagebox.showinfo("Информация", 
-                              f"Каталог шаблонов: {templates_dir}\n"
-                              f"Создайте здесь файлы с шаблонами регулярных выражений.")
-
-    def _load_template_via_dialog(self) -> None:
-        """Открывает диалог выбора файла шаблона."""
-        templates_dir = self._template_manager.get_templates_dir()
-        filepath = filedialog.askopenfilename(
-            initialdir=templates_dir,
-            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
-            title="Выберите файл шаблона"
-        )
+        self.result_tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
         
-        if filepath:
-            self._load_template(filepath)
-
-    def _load_template(self, template_path: str) -> None:
-        """
-        Загружает и применяет шаблон из файла.
-
-        Parameters
-        ----------
-        template_path : str
-            Путь к файлу шаблона.
-        """
-        pattern = self._template_manager.load_template(template_path)
-        if pattern:
-            try:
-                # Проверяем валидность регулярного выражения
-                re.compile(pattern)
-                self._extractor = ArticleExtractor(pattern)
-                self.lbl_template.config(
-                    text=f"{self._template_manager.get_current_template_name()}",
-                    foreground="green"
-                )
-                messagebox.showinfo("Успех", 
-                                  f"Шаблон '{self._template_manager.get_current_template_name()}' успешно загружен.")
-            except re.error as e:
-                messagebox.showerror("Ошибка шаблона", 
-                                   f"Невалидное регулярное выражение:\n{e}")
-                self._template_manager.reset_to_default()
-                self._extractor = ArticleExtractor(self._template_manager.get_current_pattern())
-                self.lbl_template.config(
-                    text=f"{self._template_manager.get_current_template_name()}",
-                    foreground="red"
-                )
-
-    def _reset_template(self) -> None:
-        """Сбрасывает шаблон к стандартному значению."""
-        self._template_manager.reset_to_default()
-        self._extractor = ArticleExtractor(self._template_manager.get_current_pattern())
-        self.lbl_template.config(
-            text=f"{self._template_manager.get_current_template_name()}",
-            foreground="blue"
-        )
-        messagebox.showinfo("Сброс", "Шаблон сброшен к стандартному значению.")
+        v_scroll.pack(side="right", fill="y")
+        h_scroll.pack(side="bottom", fill="x")
+        self.result_tree.pack(side="left", fill="both", expand=True)
 
     def _create_preview_widget(self, parent: ttk.Widget, file_num: int) -> ttk.Treeview:
-        """
-        Создаёт виджет предпросмотра данных с обработчиком клика по заголовкам.
-
-        Parameters
-        ----------
-        parent : ttk.Widget
-            Родительский фрейм.
-        file_num : int
-            Идентификатор файла (1 или 2) для привязки логики выбора.
-
-        Returns
-        -------
-        ttk.Treeview
-            Виджет предпросмотра.
-        """
         preview_frame = ttk.Frame(parent)
         preview_frame.pack(fill="both", expand=False, padx=5, pady=(0, 5))
-        
-        ttk.Label(preview_frame, text="Предпросмотр (кликните по заголовку):").pack(anchor="w")
+        ttk.Label(preview_frame, text="Предпросмотр (кликните по заголовку для выбора):").pack(anchor="w")
         
         tree_frame = ttk.Frame(preview_frame)
         tree_frame.pack(fill="x", expand=True)
@@ -474,26 +335,98 @@ class ArticleFinderGUI:
         tree = ttk.Treeview(tree_frame, columns=(), show="headings", height=2)
         scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
         tree.configure(xscrollcommand=scroll_x.set)
-
+        
+        # Привязка клика
         tree.bind('<Button-1>', lambda event: self._on_header_click(event, file_num, tree))
-
+        
         tree.pack(side="left", fill="x", expand=True)
         scroll_x.pack(side="bottom", fill="x")
         return tree
 
-    def _on_header_click(self, event: tk.Event, file_num: int, tree: ttk.Treeview) -> None:
-        """
-        Обработчик клика по заголовку колонки.
+    def _create_context_menu(self) -> None:
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Открыть каталог шаблонов", command=self._open_templates_dir)
+        self.context_menu.add_command(label="Загрузить шаблон...", command=self._load_template_via_dialog)
+        self.context_menu.add_command(label="Сбросить к стандартному", command=self._reset_template)
+        self.root.bind("<Button-3>", self._show_context_menu)
 
-        Parameters
-        ----------
-        event : tk.Event
-            Событие клика.
-        file_num : int
-            Номер файла.
-        tree : ttk.Treeview
-            Виджет, по которому кликнули.
-        """
+    def _show_context_menu(self, event: tk.Event) -> None:
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def _open_templates_dir(self) -> None:
+        templates_dir = self._template_manager.get_templates_dir()
+        if os.name == 'nt':
+            os.startfile(templates_dir)
+        elif os.name == 'posix':
+            import subprocess
+            subprocess.call(['xdg-open', templates_dir])
+
+    def _load_template_via_dialog(self) -> None:
+        templates_dir = self._template_manager.get_templates_dir()
+        filepath = filedialog.askopenfilename(initialdir=templates_dir, filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")])
+        if filepath:
+            self._load_template(filepath)
+
+    def _load_template(self, template_path: str) -> None:
+        pattern = self._template_manager.load_template(template_path)
+        if pattern:
+            try:
+                re.compile(pattern)
+                self._extractor = ArticleExtractor(pattern)
+                self._search_engine = ArticleSearchEngine(self._extractor)
+                self.lbl_template.config(text=f"{self._template_manager.get_current_template_name()}", foreground="green")
+                messagebox.showinfo("Успех", f"Шаблон '{self._template_manager.get_current_template_name()}' загружен.")
+            except re.error as e:
+                messagebox.showerror("Ошибка шаблона", f"Невалидное регулярное выражение:\n{e}")
+                self._reset_template()
+
+    def _reset_template(self) -> None:
+        self._template_manager.reset_to_default()
+        self._extractor = ArticleExtractor(self._template_manager.get_current_pattern())
+        self._search_engine = ArticleSearchEngine(self._extractor)
+        self.lbl_template.config(text="По умолчанию", foreground="blue")
+
+    def _select_file(self, string_var: tk.StringVar) -> None:
+        filepath = filedialog.askopenfilename(filetypes=[("Excel файлы", "*.xlsx *.xls"), ("Все файлы", "*.*")])
+        if filepath:
+            string_var.set(filepath)
+
+    def _load_file1(self) -> None:
+        self._load_file(self.path1_var.get(), 1)
+
+    def _load_file2(self) -> None:
+        self._load_file(self.path2_var.get(), 2)
+
+    def _load_file(self, path: str, file_num: int) -> None:
+        if not path:
+            messagebox.showwarning("Внимание", "Сначала выберите файл.")
+            return
+
+        try:
+            loader = ExcelDataLoader(path)
+            loader.load()
+            
+            if file_num == 1:
+                self._loader1 = loader
+                self.selected_src_col = None
+                self.lbl_src_status.config(text="Выбрана колонка: Не выбрана (кликните по заголовку)", foreground="grey")
+                self._update_preview(self.preview_tree1, loader.get_first_row(), 1)
+            else:
+                self._loader2 = loader
+                self.selected_tgt_col = None
+                self.selected_output_cols.clear()
+                self.lbl_tgt_status.config(text="Колонка для поиска: Не выбрана (кликните по заголовку)", foreground="grey")
+                self._update_preview(self.preview_tree2, loader.get_first_row(), 2)
+                self._update_checkboxes(loader.get_columns())
+
+            messagebox.showinfo("Успех", f"Файл {file_num} загружен.")
+        except Exception as e:
+            messagebox.showerror("Ошибка загрузки", str(e))
+
+    def _on_header_click(self, event: tk.Event, file_num: int, tree: ttk.Treeview) -> None:
         region = tree.identify_region(event.x, event.y)
         if region != "heading":
             return
@@ -505,204 +438,133 @@ class ArticleFinderGUI:
         if col_index < 0 or col_index >= len(cols):
             return
 
+        # col_id в Treeview - это внутренний идентификатор (например '#1'), 
+        # но нам нужно реальное имя колонки из списка tree["columns"]
+        # tree["columns"] содержит tuple идентификаторов колонок.
+        # В нашем случае при создании tree["columns"] = cols, где cols - это имена из DataFrame.
+        
         selected_col_name = cols[col_index]
 
-        # Обновляем состояние
         if file_num == 1:
-            self.selected_col1 = selected_col_name
-            self._update_visual_selection(tree, cols, selected_col_name, self.orig_headers1, 1)
-            self.lbl_sel1.config(text=f"Выбрана колонка: {selected_col_name}", foreground="black")
+            self.selected_src_col = selected_col_name
+            display_name = self._format_column_name(selected_col_name, col_index)
+            self.lbl_src_status.config(text=f"Выбрана колонка: {display_name}", foreground="black")
+            # Визуально выделяем заголовок
+            self._highlight_header(tree, cols, selected_col_name)
         else:
-            self.selected_col2 = selected_col_name
-            self._update_visual_selection(tree, cols, selected_col_name, self.orig_headers2, 2)
-            self.lbl_sel2.config(text=f"Выбрана колонка: {selected_col_name}", foreground="black")
+            self.selected_tgt_col = selected_col_name
+            display_name = self._format_column_name(selected_col_name, col_index)
+            self.lbl_tgt_status.config(text=f"Колонка для поиска: {display_name}", foreground="black")
+            self._highlight_header(tree, cols, selected_col_name)
 
-    def _update_visual_selection(self, tree: ttk.Treeview, cols: tuple, 
-                                 selected_col: str, orig_headers: list, file_num: int) -> None:
-        """
-        Обновляет текст заголовков: сбрасывает выделение со всех и ставит маркер на выбранную.
-
-        Parameters
-        ----------
-        tree : ttk.Treeview
-            Виджет дерева.
-        cols : tuple
-            Кортеж идентификаторов колонок.
-        selected_col : str
-            Имя выбранной колонки.
-        orig_headers : list
-            Список оригинальных заголовков.
-        file_num : int
-            Номер файла (для сохранения оригиналов).
-        """
-        if not orig_headers:
-            orig_headers.clear()
-            for col in cols:
-                orig_headers.append(tree.heading(col, option="text"))
-
+    def _highlight_header(self, tree: ttk.Treeview, cols: tuple, selected_col: str) -> None:
+        # Сброс стиля для всех колонок
         for col in cols:
-            tree.heading(col, text=orig_headers[cols.index(col)])
-
-        tree.heading(selected_col, text=f"▶ {orig_headers[cols.index(selected_col)]}")
+            tree.heading(col, text=self._format_column_name(col, list(cols).index(col)))
+        
+        # Установка выделения
+        idx = list(cols).index(selected_col)
+        tree.heading(selected_col, text=f"▶ {self._format_column_name(selected_col, idx)}")
 
     def _update_preview(self, tree: ttk.Treeview, first_row: pd.Series, file_num: int) -> None:
-        """
-        Обновляет содержимое виджета предпросмотра данными.
-
-        Parameters
-        ----------
-        tree : ttk.Treeview
-            Виджет для обновления.
-        first_row : pd.Series
-            Данные первой строки.
-        file_num : int
-            Номер файла (для сброса выбора).
-        """
         tree.delete(*tree.get_children())
         tree["columns"] = ()
-
-        if file_num == 1:
-            self.selected_col1 = None
-            self.orig_headers1.clear()
-            self.lbl_sel1.config(text="Выбрана колонка: Не выбрана", foreground="grey")
-        else:
-            self.selected_col2 = None
-            self.orig_headers2.clear()
-            self.lbl_sel2.config(text="Выбрана колонка: Не выбрана", foreground="grey")
-
         if first_row is None:
             return
-
+        
         cols = first_row.index.astype(str).tolist()
         tree["columns"] = cols
-
-        # Расчёт ширины колонок с ограничением
-        max_width = 150
-        min_width = 80
         
-        for col in cols:
-            header_text = str(col)
-            cell_value = str(first_row[col]) if pd.notna(first_row[col]) else ""
+        for i, col in enumerate(cols):
+            tree.heading(col, text=self._format_column_name(col, i))
+            tree.column(col, width=120, anchor="center")
             
-            if len(cell_value) > 40:
-                cell_value = cell_value[:37] + "..."
-            
-            max_len = max(len(header_text), len(cell_value))
-            calculated_width = max(min_width, min(max_len * 7 + 10, max_width))
-            
-            tree.heading(col, text=header_text)
-            tree.column(col, width=calculated_width, anchor="center", stretch=False)
+        tree.insert("", "end", values=[str(val) for val in first_row.values])
 
-        values = []
-        for val in first_row.values:
-            str_val = str(val) if pd.notna(val) else ""
-            if len(str_val) > 40:
-                str_val = str_val[:37] + "..."
-            values.append(str_val)
-        
-        tree.insert("", "end", values=values)
+    def _update_checkboxes(self, columns: List[str]) -> None:
+        # Очистка старых чекбоксов
+        for widget in self.checkboxes_frame.winfo_children():
+            widget.destroy()
+        self.col_checkboxes.clear()
 
-    def _select_file(self, string_var: tk.StringVar) -> None:
-        """Открывает диалог выбора файла."""
-        filepath = filedialog.askopenfilename(
-            filetypes=[("Excel файлы", "*.xlsx *.xls"), ("Все файлы", "*.*")]
-        )
-        if filepath:
-            string_var.set(filepath)
+        # Кнопки "Все" / "Ничего"
+        btn_frame = ttk.Frame(self.checkboxes_frame)
+        btn_frame.pack(fill="x", padx=5, pady=2)
+        ttk.Button(btn_frame, text="Все", command=lambda: self._toggle_all(True)).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Ничего", command=lambda: self._toggle_all(False)).pack(side="left", padx=2)
 
-    def _load_file1(self) -> None:
-        """Загружает первый Excel файл."""
-        self._load_file(self.path1_var.get(), 1)
+        # Создание чекбоксов
+        for i, col in enumerate(columns):
+            display_name = self._format_column_name(col, i)
+            var = tk.BooleanVar(value=True)  # По умолчанию все выбраны
+            cb = ttk.Checkbutton(self.checkboxes_frame, text=display_name, variable=var)
+            cb.pack(anchor="w", padx=20, pady=1)
+            self.col_checkboxes[col] = var
 
-    def _load_file2(self) -> None:
-        """Загружает второй Excel файл."""
-        self._load_file(self.path2_var.get(), 2)
-
-    def _load_file(self, path: str, file_num: int) -> None:
-        """
-        Общая логика загрузки Excel файла.
-
-        Parameters
-        ----------
-        path : str
-            Путь к файлу.
-        file_num : int
-            Номер файла (1 или 2).
-        """
-        if not path:
-            messagebox.showwarning("Внимание", "Сначала выберите файл через диалог.")
-            return
-
-        try:
-            loader = ExcelDataLoader(path)
-            loader.load()
-            cols = loader.get_columns()
-
-            if file_num == 1:
-                self._loader1 = loader
-            else:
-                self._loader2 = loader
-            
-            tree = self.preview_tree1 if file_num == 1 else self.preview_tree2
-            self._update_preview(tree, loader.get_first_row(), file_num)
-
-            messagebox.showinfo("Успех", f"Файл {file_num} загружен. Кликните по заголовку для выбора.")
-        except Exception as e:
-            messagebox.showerror("Ошибка загрузки", str(e))
+    def _toggle_all(self, value: bool) -> None:
+        for var in self.col_checkboxes.values():
+            var.set(value)
 
     def _find_matches(self) -> None:
-        """Ищет совпадения в выбранных колонках."""
         if not self._loader1 or not self._loader2:
             messagebox.showwarning("Внимание", "Загрузите оба файла перед поиском.")
             return
+        if not self.selected_src_col or not self.selected_tgt_col:
+            messagebox.showwarning("Внимание", "Выберите колонки для анализа (кликните по заголовкам таблиц).")
+            return
 
-        if not self.selected_col1 or not self.selected_col2:
-            messagebox.showwarning("Внимание", "Выберите колонки для анализа кликом по заголовку в таблице.")
+        # Сбор выбранных колонок для вывода
+        output_cols = [col for col, var in self.col_checkboxes.items() if var.get()]
+        if not output_cols:
+            messagebox.showwarning("Внимание", "Выберите хотя бы одну колонку для вывода.")
             return
 
         try:
-            self._update_status("Анализ первого файла...")
+            self.root.config(cursor="wait")
             self.root.update()
-            articles1 = set()
-            for val in self._loader1.get_column_data(self.selected_col1).dropna():
-                articles1.update(self._extractor.extract(str(val)))
-
-            self._update_status("Анализ второго файла...")
-            self.root.update()
-            articles2 = set()
-            for val in self._loader2.get_column_data(self.selected_col2).dropna():
-                articles2.update(self._extractor.extract(str(val)))
-
-            self._update_status("Поиск совпадений...")
-            self.root.update()
-            common = self._matcher.find_common(articles1, articles2)
-
-            self._display_results(common)
+            
+            result_df = self._search_engine.search(
+                self._loader1._dataframe,
+                self.selected_src_col,
+                self._loader2._dataframe,
+                self.selected_tgt_col,
+                output_cols
+            )
+            
+            self._display_results(result_df)
+            
+            if result_df.empty:
+                messagebox.showinfo("Результат", "Совпадений не найдено.")
+            else:
+                messagebox.showinfo("Результат", f"Найдено строк: {len(result_df)}")
+                
         except Exception as e:
             messagebox.showerror("Ошибка поиска", str(e))
-            self._update_status("Произошла ошибка. Проверьте данные.")
+        finally:
+            self.root.config(cursor="")
 
-    def _update_status(self, text: str) -> None:
-        """Обновляет поле статуса."""
-        self.res_text.config(state="normal")
-        self.res_text.delete("1.0", tk.END)
-        self.res_text.insert("1.0", text)
-        self.res_text.config(state="disabled")
-        self.root.update()
+    def _display_results(self, df: pd.DataFrame) -> None:
+        for item in self.result_tree.get_children():
+            self.result_tree.delete(item)
+        
+        if df.empty:
+            self.result_tree["columns"] = ()
+            return
 
-    def _display_results(self, matches: Set[str]) -> None:
-        """Выводит результаты поиска."""
-        self.res_text.config(state="normal")
-        self.res_text.delete("1.0", tk.END)
+        cols = df.columns.astype(str).tolist()
+        self.result_tree["columns"] = cols
+        
+        for i, col in enumerate(cols):
+            display_name = self._format_column_name(col, i)
+            self.result_tree.heading(col, text=display_name)
+            max_len = df[col].astype(str).map(len).max()
+            width = max(50, min(300, max_len * 7 + 10))
+            self.result_tree.column(col, width=width, anchor="w")
 
-        if not matches:
-            self.res_text.insert("1.0", "Совпадений не найдено.")
-        else:
-            self.res_text.insert("1.0", f"Найдено совпадений: {len(matches)}\n" + "-" * 30 + "\n")
-            for art in sorted(matches):
-                self.res_text.insert("end", f"• {art}\n")
-
-        self.res_text.config(state="disabled")
+        data = df.values.tolist()
+        for row in data:
+            str_row = [str(val) for val in row]
+            self.result_tree.insert("", "end", values=str_row)
 
 
 if __name__ == "__main__":
