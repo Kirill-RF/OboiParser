@@ -35,6 +35,8 @@ class ArticleFinderGUI:
         self.selected_src_col: Optional[str] = None
         self.selected_tgt_col: Optional[str] = None
         self.selected_output_cols: List[str] = []
+        # Колонки из Файла 1 для вывода
+        self.selected_src_output_cols: List[str] = []  
 
         # Виджеты
         self.lbl_template: ttk.Label = None
@@ -46,6 +48,7 @@ class ArticleFinderGUI:
         self.lbl_src_status: ttk.Label = None
         self.lbl_tgt_status: ttk.Label = None
         self.lbl_out_status: ttk.Label = None
+        self.lbl_src_output_status: ttk.Label = None
         
         # Меню
         self.context_menu: tk.Menu = None # Главное меню шаблонов
@@ -90,8 +93,15 @@ class ArticleFinderGUI:
         ttk.Button(btn_frame1, text="Выбрать", command=lambda: self._select_file(self.path1_var)).pack(side="left", padx=2)
         ttk.Button(btn_frame1, text="Загрузить", command=self._load_file1).pack(side="left", padx=2)
 
-        self.lbl_src_status = ttk.Label(frm1, text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", foreground="grey")
-        self.lbl_src_status.pack(anchor="w", padx=10, pady=(0, 5))
+        # Создаём фрейм для горизонтального размещения статусов
+        status_frame = ttk.Frame(frm1)
+        status_frame.pack(fill="x", padx=10, pady=(0, 5))
+
+        self.lbl_src_status = ttk.Label(status_frame, text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", foreground="grey")
+        self.lbl_src_status.pack(side="left", padx=(0, 20))
+
+        self.lbl_src_output_status = ttk.Label(status_frame, text="Колонки справочника: Не выбраны (ПКМ)", foreground="grey")
+        self.lbl_src_output_status.pack(side="left")
         self.preview_tree1 = self._create_preview_widget(frm1, file_num=1)
 
         # --- Файл 2 ---
@@ -110,7 +120,7 @@ class ArticleFinderGUI:
         self.lbl_tgt_status = ttk.Label(status_frame2, text="Колонка поиска: Не выбрана (ЛКМ)", foreground="grey")
         self.lbl_tgt_status.pack(side="left", padx=(0, 20))
         self.lbl_out_status = ttk.Label(status_frame2, text="Колонки вывода: Не выбраны (ПКМ)", foreground="grey")
-        self.lbl_out_status.pack(side="left")
+        self.lbl_out_status.pack(side="left", padx=(0, 20))
         self.preview_tree2 = self._create_preview_widget(frm2, file_num=2)
 
         # --- Кнопки ---
@@ -149,13 +159,95 @@ class ArticleFinderGUI:
         scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
         tree.configure(xscrollcommand=scroll_x.set)
         
+        # События выбора колонок - ЛКМ и ПКМ мышью
         tree.bind('<Button-1>', lambda event: self._on_header_click(event, file_num, tree))
-        tree.bind('<Button-3>', lambda event: self._on_header_rclick(event, file_num, tree))
+        tree.bind('<Button-3>', lambda event: self._on_header_rclick_extended(event, file_num, tree))
         
         tree.pack(side="left", fill="x", expand=True)
         scroll_x.pack(side="bottom", fill="x")
         return tree
+    
+    def _on_header_rclick_extended(self, event: tk.Event, file_num: int, tree: ttk.Treeview) -> None:
+        """ПКМ: Добавление/Удаление колонки из списка вывода (для обоих файлов)."""
+        
+        region = tree.identify_region(event.x, event.y)
+        if region != "heading": return
 
+        col_id = tree.identify_column(event.x)
+        col_index = int(col_id.lstrip("#")) - 1
+        cols = tree["columns"]
+        if col_index < 0 or col_index >= len(cols): return
+
+        selected_col_name = cols[col_index]
+
+        if file_num == 1:
+            # Работа с колонками справочника
+            # ✅ Разрешаем добавлять/удалять ЛЮБЫЕ колонки, включая колонку с артикулами
+            if selected_col_name in self.selected_src_output_cols:
+                self.selected_src_output_cols.remove(selected_col_name)
+            else:
+                self.selected_src_output_cols.append(selected_col_name)
+            
+            # Обновляем статус
+            if self.selected_src_output_cols:
+                names = [self._format_column_name(c, list(cols).index(c)) 
+                        for c in self.selected_src_output_cols]
+                self.lbl_src_output_status.config(
+                    text=f"Колонки справочника: {', '.join(names)}", 
+                    foreground="black"
+                )
+            else:
+                self.lbl_src_output_status.config(
+                    text="Колонки справочника: Не выбраны (ПКМ)", 
+                    foreground="grey"
+                )
+            
+            self._highlight_header_src_output(tree, cols)
+            
+        else:
+            # Существующая логика для Файла 2
+            if selected_col_name in self.selected_output_cols:
+                self.selected_output_cols.remove(selected_col_name)
+            else:
+                self.selected_output_cols.append(selected_col_name)
+
+            if self.selected_output_cols:
+                names = []
+                for c in self.selected_output_cols:
+                    idx = list(cols).index(c)
+                    names.append(self._format_column_name(c, idx))
+                self.lbl_out_status.config(
+                    text=f"Колонки вывода: {', '.join(names)}", 
+                    foreground="black"
+                )
+            else:
+                self.lbl_out_status.config(
+                    text="Колонки вывода: Не выбраны (ПКМ)", 
+                    foreground="grey"
+                )
+
+            self._highlight_header_output(tree, cols)
+            
+    def _highlight_header_src_output(self, tree: ttk.Treeview, cols: tuple) -> None:
+        """Подсветка заголовков для Файла 1 (артикулы + дополнительные колонки)."""
+        current_article_col = self.selected_src_col
+        
+        for col in cols:
+            idx = list(cols).index(col)
+            base_text = self._format_column_name(col, idx)
+            
+            is_output = col in self.selected_src_output_cols
+            is_article = col == current_article_col
+            
+            if is_article and is_output:
+                tree.heading(col, text=f"▶ ★ {base_text}")
+            elif is_article:
+                tree.heading(col, text=f"▶ {base_text}")
+            elif is_output:
+                tree.heading(col, text=f"★ {base_text}")
+            else:
+                tree.heading(col, text=base_text)
+        
     def _create_context_menus(self) -> None:
         # 1. Главное контекстное меню (для пустых мест)
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -207,25 +299,6 @@ class ArticleFinderGUI:
         self.root.clipboard_append(text)
         self.root.update() # Чтобы буфер обновился даже после закрытия окна (опционально)
         self.status_var.set("Скопировано в буфер обмена!")
-
-    def _get_tree_data_as_text(self, tree: ttk.Treeview, items: tuple) -> str:
-        """Преобразует строки Treeview в текстовый формат (TSV)."""
-        if not items:
-            return ""
-        
-        # Заголовки колонок
-        cols = tree["columns"]
-        header = "\t".join(cols)
-        
-        # Данные
-        rows_text = []
-        for item_id in items:
-            values = tree.item(item_id, "values")
-            # Преобразуем все в строки, чтобы join не упал
-            row_str = "\t".join(str(val) for val in values)
-            rows_text.append(row_str)
-            
-        return header + "\n" + "\n".join(rows_text)
 
     def _copy_selected_rows(self) -> None:
         """Копирует выделенные пользователем строки."""
@@ -309,14 +382,21 @@ class ArticleFinderGUI:
             if file_num == 1:
                 self._loader1 = loader
                 self.selected_src_col = None
-                self.lbl_src_status.config(text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", foreground="grey")
+                self.selected_src_output_cols = []  # Сброс
+                self.lbl_src_status.config(text="Выбрана колонка: Не выбрана (ЛКМ по заголовку)", 
+                                           foreground="grey")
+                if hasattr(self, 'lbl_src_output_status'):
+                    self.lbl_src_output_status.config(text="Колонки справочника: Не выбраны (ПКМ)",
+                                                      foreground="grey")
                 self._update_preview(self.preview_tree1, loader.get_first_row(), 1)
             else:
                 self._loader2 = loader
                 self.selected_tgt_col = None
                 self.selected_output_cols = []
-                self.lbl_tgt_status.config(text="Колонка поиска: Не выбрана (ЛКМ)", foreground="grey")
-                self.lbl_out_status.config(text="Колонки вывода: Не выбраны (ПКМ)", foreground="grey")
+                self.lbl_tgt_status.config(text="Колонка поиска: Не выбрана (ЛКМ)",
+                                           foreground="grey")
+                self.lbl_out_status.config(text="Колонки вывода: Не выбраны (ПКМ)", 
+                                           foreground="grey")
                 self._update_preview(self.preview_tree2, loader.get_first_row(), 2)
 
             # ✅ Показываем сообщение в области результатов
@@ -452,7 +532,8 @@ class ArticleFinderGUI:
                 self.selected_src_col,
                 self._loader2.get_dataframe(),
                 self.selected_tgt_col,
-                self.selected_output_cols
+                self.selected_output_cols,
+                self.selected_src_output_cols
             )
             
             self._display_results(result_df)
