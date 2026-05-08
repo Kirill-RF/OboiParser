@@ -39,23 +39,24 @@ class ArticleFinderGUI:
         self.selected_src_output_cols: List[str] = []  
 
         # Виджеты
-        self.lbl_template: ttk.Label = None
-        self.preview_tree1: ttk.Treeview = None
-        self.preview_tree2: ttk.Treeview = None
-        self.result_tree: ttk.Treeview = None
+        self.lbl_template: Optional[ttk.Label] = None
+        self.preview_tree1: Optional[ttk.Treeview] = None
+        self.preview_tree2: Optional[ttk.Treeview] = None
+        self.result_tree: Optional[ttk.Treeview] = None
         
         # Метки статуса
-        self.lbl_src_status: ttk.Label = None
-        self.lbl_tgt_status: ttk.Label = None
-        self.lbl_out_status: ttk.Label = None
-        self.lbl_src_output_status: ttk.Label = None
+        self.lbl_src_status: Optional[ttk.Label] = None
+        self.lbl_tgt_status: Optional[ttk.Label] = None
+        self.lbl_out_status: Optional[ttk.Label] = None
+        self.lbl_src_output_status: Optional[ttk.Label] = None
         
-        # Меню
-        self.context_menu: tk.Menu = None # Главное меню шаблонов
-        self.result_context_menu: tk.Menu = None # Меню для результатов поиска
+        # Главное меню шаблонов
+        self.context_menu: Optional[tk.Menu] = None 
+        # Меню для результатов поиска
+        self.result_context_menu: Optional[tk.Menu] = None 
 
-        self.status_var: tk.StringVar = None
-        self.status_bar: ttk.Label = None
+        self.status_var: Optional[tk.StringVar] = None
+        self.status_bar: Optional[ttk.Label] = None
 
         self._setup_ui()
         self._create_context_menus()
